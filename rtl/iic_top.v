@@ -24,6 +24,7 @@ reg[7:0]    RXR;
 reg[7:0]    SR;
 reg[7:0]    CTR;
 reg[4:0]    count;
+reg ack;
 
 parameter avaliable = 8'b00000000;
 parameter sending_start = 8'b00001001;
@@ -33,30 +34,30 @@ parameter sending_end   = 8'b00001100;
 
 wire mod   = CTR[0];      //1:write 0:read
 wire start = CTR[1];
+wire scl_clk;
+
 
 reg done_start;
 reg sda_start;
 reg sda_oen_n3;
 reg scl_oen_n3;
 //grnerate start signal
-always@(posedge scl_o or negedge rst_n) begin
+always@(posedge scl_clk or negedge rst_n) begin
     if(rst_n == 0) begin
         sda_start <= 1;
         done_start <= 0;
         sda_oen_n3 <= 1;
         scl_oen_n3 <= 1;
     end
-    else if(SR == sending_start) begin
-        scl_oen_n3 <= 0;
-        sda_oen_n3 <= 0;
+    else begin
         if(done_start == 0 && start == 1)begin
             sda_start <=  #5 0;
+            sda_start <=  #10 1;
             done_start <= #5 1;
-        end
-        else if(done_start == 1 && start == 1 && sda_start == 0)begin    //after start , reset sda_start to avoid sda always be 0
-            sda_start <= 1;
-            sda_oen_n3 <= 1;
-            scl_oen_n3 <= 1;
+            scl_oen_n3 <= 0;
+            sda_oen_n3 <= 0;
+            sda_oen_n3 <= #10 1;
+            scl_oen_n3 <= #10 1;
         end
     end
 end
@@ -67,7 +68,7 @@ reg done_send;
 reg sda_oen_n4;
 reg scl_oen_n4;
 //generate send data 
-always@(negedge scl_o or negedge rst_n or posedge next) begin
+always@(negedge scl_clk or negedge rst_n or posedge next) begin
     if(rst_n == 0) begin
         done_send <= 0;
         sda_send  <= 1;
@@ -92,6 +93,7 @@ always@(negedge scl_o or negedge rst_n or posedge next) begin
 
     if(count[4] == 1) begin
         done_send <= 1;
+        sda_send <= 1;
         sda_oen_n4 <= 1;
         scl_oen_n4 <= 1;
     end
@@ -103,60 +105,69 @@ reg scl_oen_n1;
 //generate scl,sda outenable signal, when receiving ack,sda,scl should not output
 always@(posedge done_send or negedge rst_n) begin
     if(rst_n == 0)begin
-        scl_oen_ack_n1 <= 1;
-        sda_oen_ack_n1 <= 1;
+        scl_oen_n1 <= 1;
+        sda_oen_n1 <= 1;
     end
     else if(done_send == 1)begin
-        scl_oen_ack_n1 <= 1;
-        sda_oen_ack_n1 <= 1;
+        scl_oen_n1 <= 1;
+        sda_oen_n1 <= 1;
     end
 end
 
-reg ack;
-reg sda_oen_n2;
-reg scl_oen_n2;
+
+
 //receive ack
 always@(negedge sda_i or negedge rst_n) begin
     if(rst_n == 0) begin
         ack <= 1'bz;
-        sda_oen_n2 <= 1;
-        scl_oen_n2 <= 1;
-    else 
+    end
     if(SR == waiting_ack) begin
-        if(sda_i == 0 && scl_i == 1)  ack <= 0;     //no ack
-        if(sda_i == 0 && scl_i == 0)  ack <= 1;     //ack
-        sda_oen_n2 <= 0;                            //output enable 
-        scl_oen_n2 <= 0;                            //output enable
+        if(sda_i == 0 && scl_i == 1)  begin
+            ack <= 0;     //no ack
+        end
+        if(sda_i == 0 && scl_i == 0)  begin
+            ack <= 1;     //ack
+        end
     end
 end
 
 reg scl_end;
 reg sda_end;
 reg done_end;
+reg sda_oen_n5;
+reg scl_oen_n5;
 //generate end signal
 always@(negedge start or negedge rst_n) begin
     if(rst_n == 0) begin
         scl_end <= 1;
         sda_end <= 1;
         done_end <= 0;
+        scl_oen_n5 <= 1;
+        sda_oen_n5 <= 1;
     end
     else if(start == 0 && done_send) begin
+        sda_oen_n5 <= 0;
+        scl_oen_n5 <= 0;
+        scl_oen_n5 <= #10 1;
+        sda_oen_n5 <= #10 1;
         scl_end <= 1;
         scl_end <= 0;
-        scl_end <= #1 1;
+        scl_end <= #5 1;
         done_end <= 1;
     end
 end
 
 
 reg[3:0] DIV;          //frequency dive
-//generate scl
-assign scl_o = DIV[3];
+//generate dive
+assign scl_clk = DIV[3];
 always@(posedge clk or negedge rst_n) begin
     if(rst_n == 0) begin
         DIV <= 0;
     end
-    else DIV <= DIV +1;
+    else if( SR == sending_start || SR == sending_data)
+        DIV <= DIV +1;
+    else DIV[3] <= 1;
 end
 
 
@@ -211,8 +222,9 @@ end
 
 
 assign sda_o =  sda_start & sda_end & sda_send;
-assign sda_oen_n = sda_oen_n1 & sda_oen_n2 & sda_oen_n3 & sda_oen_n4;
-assign scl_oen_n = scl_oen_n1 & scl_oen_n2 & scl_oen_n3 & scl_oen_n4;
+assign scl_o = scl_clk & scl_end;
+assign sda_oen_n = sda_oen_n1  & sda_oen_n3 & sda_oen_n4 & sda_oen_n5;
+assign scl_oen_n = scl_oen_n1  & scl_oen_n3 & scl_oen_n4 & scl_oen_n5;
 
 
 endmodule  //iic_top
