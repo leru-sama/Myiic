@@ -42,7 +42,7 @@ reg sda_start;
 reg sda_oen_n3;
 reg scl_oen_n3;
 //grnerate start signal
-always@(posedge scl_clk or negedge rst_n) begin
+always@(posedge clk or negedge rst_n) begin
     if(rst_n == 0) begin
         sda_start <= 1;
         done_start <= 0;
@@ -51,13 +51,15 @@ always@(posedge scl_clk or negedge rst_n) begin
     end
     else begin
         if(done_start == 0 && start == 1)begin
-            sda_start <=  #5 0;
-            sda_start <=  #10 1;
-            done_start <= #5 1;
             scl_oen_n3 <= 0;
             sda_oen_n3 <= 0;
-            sda_oen_n3 <= #10 1;
-            scl_oen_n3 <= #10 1;
+            sda_start <= 0;               //strat signal
+            done_start <= 1;              //done start
+        end
+        if(done_start == 1 && start == 1) begin
+            scl_oen_n3 <= 1;
+            sda_oen_n3 <= 1;
+            sda_start <= 1;
         end
     end
 end
@@ -165,7 +167,7 @@ always@(posedge clk or negedge rst_n) begin
     if(rst_n == 0) begin
         DIV <= 0;
     end
-    else if( SR == sending_start || SR == sending_data)
+    else if( ( SR == sending_start || SR == sending_data) && done_start)
         DIV <= DIV +1;
     else DIV[3] <= 1;
 end
