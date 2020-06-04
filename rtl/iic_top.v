@@ -1,6 +1,4 @@
 
-`timescale  1ps/1ps
-
 module iic_top 
 (
     input       clk,
@@ -23,14 +21,22 @@ reg[7:0]    TXR;
 reg[7:0]    RXR;
 reg[7:0]    SR;
 reg[7:0]    CTR;
-reg[4:0]    count;
+reg[4:0]    count_send;
+reg[4:0]    count_recieve;
 reg ack;
 
+
+//SR parameters 
 parameter avaliable = 8'b00000000;
 parameter sending_start = 8'b00001001;
 parameter sending_data  = 8'b00001010;
 parameter waiting_ack   = 8'b00001000;
+parameter sending_ack   = 8'b00010000;
 parameter sending_end   = 8'b00001100;
+
+//mod parameters
+parameter RD = 1'b0;
+parameter WR = 1'b1;
 
 wire mod   = CTR[0];      //1:write 0:read
 wire start = CTR[1];
@@ -74,33 +80,54 @@ always@(negedge scl_clk or negedge rst_n or posedge next) begin
     if(rst_n == 0) begin
         done_send <= 0;
         sda_send  <= 1;
-        count     <= 4'b0111;
+        count_send     <= 4'b0111;
         sda_oen_n4 <= 1;
         scl_oen_n4 <= 1;
     end
-    else if(next == 1 && done_send && ack == 1) begin       //if there is a new data and prvious data has been sent,reset send reg and generate next send 
-        done_send <= 0;
-        sda_send  <= 1;
-        count     <= 4'b0111;
-    end
-    else if(count[4] == 0 && done_start) begin
-        sda_send <= TXR[count];
-        count <= count - 1;
-    end 
+    else 
+    if(mod == WR) begin
+        if(next == 1 && done_send && ack == 1) begin       //if there is a new data and prvious data has been sent,reset send reg and generate next send 
+            done_send <= 0;
+            sda_send  <= 1;
+            count_send     <= 4'b0111;
+        end
+        else if(count_send[4] == 0 && done_start) begin
+            sda_send <= TXR[count_send];
+            count_send <= count_send - 1;
+        end 
 
-    if(done_start && count == 4'b0111)begin
-        sda_oen_n4 <= 0;
-        scl_oen_n4 <= 0;
-    end
-
-    if(count[4] == 1) begin
-        done_send <= 1;
-        sda_send <= 1;
-        sda_oen_n4 <= 1;
-        scl_oen_n4 <= 1;
+        if(done_start && count_send == 4'b0111)begin
+            sda_oen_n4 <= 0;
+            scl_oen_n4 <= 0;
+        end
+        if(count_send[4] == 1) begin
+            done_send <= 1;
+            sda_send <= 1;
+            sda_oen_n4 <= 1;
+            scl_oen_n4 <= 1;
+        end
     end
 end
 
+reg done_recieve;
+//generate recieve data
+always @(negedge scl_clk or negedge rst_n) begin
+    if(rst_n == 0) begin
+        RXR <= 8'h00;
+        count_recieve <= 5'b0111;
+        done_recieve <= 0;
+    end
+    else 
+    if(mod == RD) begin
+        if(count_recieve[4] == 0 && done_start == 1) begin
+            RXR[count_recieve] <= sda_i;
+            count_recieve <= count_recieve -1;
+        end
+        else if(count_recieve[4] == 1) begin
+            done_recieve <= 1;
+        end
+    end
+end
 
 reg sda_oen_n1;
 reg scl_oen_n1;
@@ -133,13 +160,26 @@ always@(negedge sda_i or negedge rst_n) begin
     end
 end
 
+
+reg scl_ack;
+//send ack
+always@(posedge clk or negedge rst_n) begin
+    if(rst_n == 0)begin
+        scl_ack <= 1;
+    end     
+    else if(SR == sending_ack)begin
+        scl_ack <= 0;           //ack
+    end
+end
+
+
 reg scl_end;
 reg sda_end;
 reg done_end;
 reg sda_oen_n5;
 reg scl_oen_n5;
 //generate end signal
-always@(negedge start or negedge rst_n) begin
+always@(posedge clk or negedge rst_n) begin
     if(rst_n == 0) begin
         scl_end <= 1;
         sda_end <= 1;
@@ -148,14 +188,13 @@ always@(negedge start or negedge rst_n) begin
         sda_oen_n5 <= 1;
     end
     else if(start == 0 && done_send) begin
-        sda_oen_n5 <= 0;
-        scl_oen_n5 <= 0;
-        scl_oen_n5 <= #10 1;
-        sda_oen_n5 <= #10 1;
-        scl_end <= 1;
         scl_end <= 0;
-        scl_end <= #5 1;
+        scl_oen_n5 <= 0;
         done_end <= 1;
+    end
+    else if(start == 0 && done_end) begin
+        scl_end <= 1;
+        scl_oen_n5 <= 1;
     end
 end
 
